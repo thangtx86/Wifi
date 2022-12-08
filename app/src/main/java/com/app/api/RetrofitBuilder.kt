@@ -10,7 +10,7 @@ import retrofit2.converter.gson.GsonConverterFactory
  *
  **/
 object RetrofitBuilder {
-    private const val BASE_URL = "https://5e510330f2c0d300147c034c.mockapi.io/"
+    private const val BASE_URL = "http://192.168.1.2:3000/"
 
     private fun getRetrofit(): Retrofit {
         return Retrofit.Builder()

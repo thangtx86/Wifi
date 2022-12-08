@@ -1,25 +1,32 @@
 package com.app
 
 
+import android.annotation.SuppressLint
 import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
 import android.net.ConnectivityManager
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
-import com.app.api.ApiHelper
 import com.app.api.ApiHelperImpl
-import com.app.api.ApiService
 import com.app.api.RetrofitBuilder
-import kotlinx.coroutines.*
+import com.google.gson.Gson
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.net.*
 import java.text.SimpleDateFormat
 import java.util.*
+
 
 /**
  *
@@ -28,12 +35,10 @@ import java.util.*
  *
  **/
 
-class NetworkService : Service(), NetworkStateReceiver.NetworkStateReceiverListener {
+class NetworkService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var isServiceStarted = false
-
-    private var networkStateReceiver: NetworkStateReceiver? = null
 
     override fun onBind(intent: Intent): IBinder? {
         log("Some component want to bind with the service")
@@ -106,23 +111,15 @@ class NetworkService : Service(), NetworkStateReceiver.NetworkStateReceiverListe
         // we're starting a loop in a coroutine
         GlobalScope.launch(Dispatchers.IO) {
             while (isServiceStarted) {
-                launch(Dispatchers.IO) {
-                    doNetwork()
-                    pingFakeServer()
+                checkNetworkInfo { isConnect ->
+                    onNetworkAvailable(isConnect)
+
+
                 }
                 delay(1 * 60 * 1000)
             }
             log("End of the loop for the service")
         }
-    }
-
-    private fun doNetwork() {
-        networkStateReceiver = NetworkStateReceiver(this)
-        networkStateReceiver!!.addListener(this)
-        applicationContext.registerReceiver(
-            networkStateReceiver,
-            IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION)
-        )
     }
 
     private fun stopService() {
@@ -141,39 +138,6 @@ class NetworkService : Service(), NetworkStateReceiver.NetworkStateReceiverListe
         }
         isServiceStarted = false
         setServiceState(this, ServiceState.STOPPED)
-    }
-
-    private fun pingFakeServer() {
-        val df = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.mmmZ")
-        val gmtTime = df.format(Date())
-
-        val deviceId = Settings.Secure.getString(
-            applicationContext.contentResolver,
-            Settings.Secure.ANDROID_ID
-        )
-
-        val json =
-            """
-                {
-                    "deviceId": "$deviceId",
-                    "createdAt": "$gmtTime"
-                }
-            """
-        try {
-            val apiHelper = ApiHelperImpl(RetrofitBuilder.apiService)
-//            Fuel.post("https://jsonplaceholder.typicode.com/posts")
-//                .jsonBody(json)
-//                .response { _, _, result ->
-//                    val (bytes, error) = result
-//                    if (bytes != null) {
-//                        log("[response bytes] ${String(bytes)}")
-//                    } else {
-//                        log("[response error] ${error?.message}")
-//                    }
-//                }
-        } catch (e: Exception) {
-            log("Error making the request: ${e.message}")
-        }
     }
 
     private fun createNotification(): Notification {
@@ -220,19 +184,66 @@ class NetworkService : Service(), NetworkStateReceiver.NetworkStateReceiverListe
             .build()
     }
 
+    @SuppressLint("HardwareIds")
+    fun onNetworkAvailable(isConnect: Boolean) {
 
-    override fun onNetworkAvailable(data: String?) {
-        val ssid = getSSID(this)
-        if (ssid == data) {
-            log("----Network not change: +" + data)
+        if (isConnect) {
+            val netInfo = getWifiInfo()
+            val oldSSID: String = getSSID(this)
+            if (oldSSID.length == 0 || oldSSID == null) {
+                setSSID(this, netInfo.bssid)
+                log("Save SSID")
+            } else {
+                if (oldSSID.equals(netInfo.bssid)) {
+                    log("Internet not change")
+                } else {
+                    setSSID(this, netInfo.bssid)
+                    GlobalScope.launch(Dispatchers.IO) {
+                        try {
+                            val apiHelper = ApiHelperImpl(RetrofitBuilder.apiService)
+                            apiHelper.postSSID()
+                        } catch (e: java.lang.Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
+            }
+
+            log("============ Connected")
         } else {
-            log("----Network is changed: +" + data)
+            log("============No Connect")
         }
 
+
     }
 
-    override fun onNetworkUnavailable(data: String?) {
-        log("save ssid")
-        setSSID(this, data ?: "")
+    private fun getWifiInfo(): WifiInfo {
+        val df = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.mmmZ", Locale.UK)
+        val gmtTime = df.format(Date())
+
+        val deviceId = Settings.Secure.getString(
+            applicationContext.contentResolver,
+            Settings.Secure.ANDROID_ID
+        )
+        val mainWifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+        val wInfo = mainWifiManager.connectionInfo
+        val netInfo = mainWifiManager.dhcpInfo
+        val info = WifiInfo(
+            deviceId,
+            gmtTime,
+            wInfo.ssid,
+            wInfo.bssid,
+            getIPv4Address(),
+            getIPv6Address(),
+            "",
+            "ss",
+            netInfo.dns1.intToIp(),
+            netInfo.dns2.intToIp(),
+            netInfo.dns2.intToIp(),
+            wInfo.networkId
+        )
+        return info
     }
+
+
 }

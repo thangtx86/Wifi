@@ -1,7 +1,15 @@
 package com.app
 
+import android.content.Context
 import android.content.SharedPreferences
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.os.Build
 import android.util.Log
+import java.net.*
+import java.util.*
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
 
@@ -11,70 +19,81 @@ import kotlin.reflect.KProperty
  *   Created by ThangTX86 on 07/12/2022
  *
  **/
-inline fun <reified T> sharedPref(prefs: SharedPreferences, defaultValue: T = defaultForType()) =
-    object : ReadWriteProperty<Any, T> {
-        override fun getValue(thisRef: Any, property: KProperty<*>) =
-            prefs[getKey(thisRef, property), defaultValue]
 
-        override fun setValue(thisRef: Any, property: KProperty<*>, value: T) {
-            prefs[getKey(thisRef, property)] = value
-        }
-
-        private fun getKey(thisRef: Any, property: KProperty<*>) =
-            "${thisRef.javaClass.simpleName}.${property.name}"
-    }
-
-/**
- * Set property [value] to shared preferences by [key].
- * @param T type of the property
- */
-inline operator fun <reified T> SharedPreferences.set(key: String, value: T) {
-    edit().apply {
-        when (value) {
-            is String -> putString(key, value)
-            is Int -> putInt(key, value)
-            is Boolean -> putBoolean(key, value)
-            is Float -> putFloat(key, value)
-            is Long -> putLong(key, value)
-            else -> throw UnsupportedOperationException("Type ${T::class} is not supported yet")
-        }
-    }.apply()
-}
-
-/**
- * Get property value by [key]. If property not set return [defaultValue] ("", true, 0 if not given).
- * @param T type of the property
- * @return saved value or [defaultValue].
- */
-inline operator fun <reified T> SharedPreferences.get(
-    key: String,
-    defaultValue: T = defaultForType()
-) =
-    when (defaultValue) {
-        is String -> getString(key, defaultValue) as T
-        is Int -> getInt(key, defaultValue) as T
-        is Boolean -> getBoolean(key, defaultValue) as T
-        is Float -> getFloat(key, defaultValue) as T
-        is Long -> getLong(key, defaultValue) as T
-        else -> throw UnsupportedOperationException("Type ${T::class} is not supported yet")
-    }
-
-/**
- * Default value for typical property types.
- * @param T [String] -> empty string
- * @param T [Int] / [Float] / [Long] -> 0
- * @param T [Boolean] -> false
- */
-inline fun <reified T> defaultForType(): T =
-    when (T::class) {
-        String::class -> "" as T
-        Int::class -> 0 as T
-        Boolean::class -> false as T
-        Float::class -> 0F as T
-        Long::class -> 0L as T
-        else -> throw IllegalArgumentException("Default value not found for type ${T::class}")
-    }
 
 fun log(message: String) {
     Log.d("ThangTX2", message)
+}
+
+fun Context.checkNetworkInfo(isConnected: (Boolean) -> Unit) {
+    val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        val capabilities =
+            connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
+        if (capabilities == null) {
+            isConnected.invoke(false)
+        }
+        connectivityManager.registerNetworkCallback(
+            NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET).build(),
+            object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    isConnected.invoke(true)
+                }
+
+                override fun onLost(network: Network) {
+                    isConnected.invoke(false)
+                }
+            })
+    } else {
+        val networkInfo = connectivityManager.activeNetworkInfo
+        isConnected.invoke(networkInfo != null && networkInfo.isConnectedOrConnecting)
+    }
+}
+
+fun Int.intToIp(): String {
+    return ((this and 0xFF).toString() + "."
+            + (this shr 8 and 0xFF) + "."
+            + (this shr 16 and 0xFF) + "."
+            + (this shr 24 and 0xFF))
+}
+
+fun getIPv4Address(): String {
+    try {
+        val enumNetworkInterfaces: Enumeration<NetworkInterface> =
+            NetworkInterface.getNetworkInterfaces()
+        while (enumNetworkInterfaces.hasMoreElements()) {
+            val networkInterface: NetworkInterface = enumNetworkInterfaces.nextElement()
+            val enumIpAddr: Enumeration<InetAddress> = networkInterface.getInetAddresses()
+            while (enumIpAddr.hasMoreElements()) {
+                val inetAddress: InetAddress = enumIpAddr.nextElement()
+                if (!inetAddress.isLoopbackAddress && inetAddress is Inet4Address) {
+                    return inetAddress.getHostAddress()
+                }
+            }
+        }
+    } catch (ex: SocketException) {
+        Log.e("getIPv4Address()", ex.toString())
+    }
+    return "N/A"
+}
+
+fun getIPv6Address(): String {
+    try {
+        val enumNetworkInterfaces = NetworkInterface.getNetworkInterfaces()
+        while (enumNetworkInterfaces.hasMoreElements()) {
+            val networkInterface = enumNetworkInterfaces.nextElement()
+            val enumIpAddr = networkInterface.inetAddresses
+            while (enumIpAddr.hasMoreElements()) {
+                val inetAddress = enumIpAddr.nextElement()
+                if (!inetAddress.isLoopbackAddress && inetAddress is Inet6Address) {
+                    return inetAddress.hostAddress
+                }
+            }
+        }
+    } catch (ex: SocketException) {
+        Log.e("getIPv6Address()", ex.toString())
+    }
+    return "N/A"
 }

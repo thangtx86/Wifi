@@ -1,6 +1,6 @@
 package com.app.api
 
-import retrofit2.http.POST
+import retrofit2.http.GET
 
 /**
  *
@@ -10,6 +10,6 @@ import retrofit2.http.POST
  **/
 interface ApiService {
 
-    @POST
+    @GET("/login")
     suspend fun postSSID()
 }
